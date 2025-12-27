@@ -21,7 +21,6 @@ public class ChannelRadio implements LoRaInterface {
         return inbox.take();
     }
 
-    // CRUCIALE METHODE: Channel roept dit aan om packet te deliveren
     public void deliver(Packet packet) {
         inbox.add(packet);
     }

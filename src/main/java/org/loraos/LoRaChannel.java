@@ -1,34 +1,40 @@
 package org.loraos;
 
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.LinkedBlockingQueue;
 
 public class LoRaChannel {
-    private final CopyOnWriteArrayList<LoRaInterface> radios = new CopyOnWriteArrayList<>();
-    private final double packetLoss = 0.1; // 10% verlies
-    private final long avgLatencyMs = 50;
+    // Alle radios (ChannelRadio) die op dit kanaal zitten
+    private final CopyOnWriteArrayList<ChannelRadio> radios = new CopyOnWriteArrayList<>();
 
-    public void register(LoRaInterface radio) {
+    // Simulatieparameters
+    private final double packetLoss = 0.1; // 10% kans dat een packet wegvalt
+    private final long avgLatencyMs = 50;  // gemiddelde latency ~50ms
+
+    public void register(ChannelRadio radio) {
         radios.add(radio);
     }
 
-    public void sendFrom(LoRaInterface sender, Packet packet) {
+    // Wordt aangeroepen door een ChannelRadio wanneer die een packet wil uitzenden
+    public void sendFrom(ChannelRadio sender, Packet packet) {
         new Thread(() -> {
             try {
-                Thread.sleep((long)(Math.random() * avgLatencyMs * 2));
-            } catch (InterruptedException ignored) {
+                // Simuleer variabele latency
+                Thread.sleep((long) (Math.random() * avgLatencyMs * 2));
+            } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return;
             }
 
-            for (LoRaInterface receiver : radios) {
+            // Stuur naar alle andere radios op het kanaal
+            for (ChannelRadio receiver : radios) {
                 if (receiver == sender) continue;
 
+                // Simuleer packet loss
                 if (Math.random() > packetLoss) {
                     try {
-                        ((ChannelRadio) receiver).deliver(packet);
+                        receiver.deliver(packet);
                     } catch (Exception e) {
-                        System.err.println("Failed to deliver packet to receiver: " + e.getMessage());
+                        System.err.println("Failed to deliver packet: " + e.getMessage());
                     }
                 }
             }

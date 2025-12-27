@@ -8,7 +8,7 @@ public class SimRadio implements LoRaInterface {
 
     @Override
     public void send(Packet packet) {
-        // In echte sim zou je hier latency/loss en meerdere ontvangers doen
+
         inbox.add(packet);
     }
 
