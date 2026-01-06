@@ -27,14 +27,14 @@ public class SerialLoRaInterface implements LoRaInterface {
     public Packet receiveBlocking() throws InterruptedException {
         while (true) {
             int available = serialPort.bytesAvailable();
-            if (available >= 7) { // min packet size
+            if (available >= 7) {
                 int read = serialPort.readBytes(readBuffer, 7);
                 if (read >= 7) {
                     try {
                         Packet p = Packet.fromBytes(readBuffer);
                         return p;
                     } catch (IllegalArgumentException ignored) {
-                        // incomplete packet, continue reading
+
                     }
                 }
             }

@@ -2,10 +2,10 @@ package org.loraos;
 
 public class Simulation {
     public static void main(String[] args) throws Exception {
-        // 1. Kanaal voor simulatie nodes
+        System.out.println("LoRa Mesh with ECDH Key Exchange + Ratcheting\n");
+
         LoRaChannel channel = new LoRaChannel();
 
-        // 2. Drie radios op hetzelfde kanaal
         ChannelRadio radioA = new ChannelRadio(channel);
         ChannelRadio radioB = new ChannelRadio(channel);
         ChannelRadio radioC = new ChannelRadio(channel);
@@ -13,12 +13,10 @@ public class Simulation {
         channel.register(radioB);
         channel.register(radioC);
 
-        // 3. Drie MeshNodes (met encryptie in MeshNode)
         MeshNode nodeA = new MeshNode((byte) 1, radioA);
         MeshNode nodeB = new MeshNode((byte) 2, radioB);
         MeshNode nodeC = new MeshNode((byte) 3, radioC);
 
-        // 4. Threads starten
         Thread tA = new Thread(nodeA, "Node-A");
         Thread tB = new Thread(nodeB, "Node-B");
         Thread tC = new Thread(nodeC, "Node-C");
@@ -26,27 +24,28 @@ public class Simulation {
         tB.start();
         tC.start();
 
-        Thread.sleep(1000);
+        Thread.sleep(500);
 
-        // 5. Test: A -> C via B (CHAT, mag hoppen)
-        System.out.println("=== A -> C (mesh chat, via B) ===");
-        nodeA.sendChat((byte) 3, "Hallo via B naar C!", false); // false = forwarden toegestaan
-
-        Thread.sleep(1000);
-
-        // 6. Test: A -> B privé (NO_FORWARD)
-        System.out.println("=== A -> B (private chat, NO_FORWARD) ===");
-        nodeA.sendChat((byte) 2, "Privé bericht voor B", true); // true = NO_FORWARD
+        System.out.println("=== Test 1: Key Exchange + Multiple Messages (A -> B) ===");
+        nodeA.sendChat((byte) 2, "First message", true);
+        Thread.sleep(300);
+        nodeA.sendChat((byte) 2, "Second message", true);
+        Thread.sleep(300);
+        nodeA.sendChat((byte) 2, "Third message", true);
 
         Thread.sleep(1000);
 
-        // 7. Test: B -> A (CMD: PING, mag hoppen)
-        System.out.println("=== B -> A (CMD: PING) ===");
+        System.out.println("\n=== Test 2: Mesh Routing (A -> C via B) ===");
+        nodeA.sendChat((byte) 3, "Hello node 3 via mesh!", false);
+
+        Thread.sleep(1000);
+
+        System.out.println("\n=== Test 3: Reverse Direction (B -> A) ===");
         nodeB.sendTo((byte) 1, "PING", MessageType.CMD, (byte) 5);
 
-        Thread.sleep(2000);
+        Thread.sleep(1500);
+        
 
-        // 8. Cleanup
         nodeA.stop();
         nodeB.stop();
         nodeC.stop();

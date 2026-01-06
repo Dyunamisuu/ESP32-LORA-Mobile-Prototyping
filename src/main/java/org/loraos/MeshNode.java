@@ -13,10 +13,11 @@ public class MeshNode implements Runnable {
     private int seq = 0;
 
     private final Crypto crypto;
-
     private final Set<String> seenPackets = new HashSet<>();
 
-    // vervang later
+    // Track if we initiated key exchange (to avoid response loops)
+    private final Set<Integer> keyExchangeInitiated = new HashSet<>();
+
     private static final String KEY_B64 =
             "8m7FZ5i7g2zQqZ4X7qX4yY0o5S8+H3y0uA7c3bTtq2Q=";
 
@@ -30,12 +31,43 @@ public class MeshNode implements Runnable {
     }
 
     public void sendChat(byte dst, String text, boolean privateDirect) throws Exception {
+        int dstId = dst & 0xFF;
+
+        // Ensure key exchange is complete before sending encrypted data
+        if (!crypto.hasSharedSecret(dstId)) {
+            synchronized (keyExchangeInitiated) {
+                if (!keyExchangeInitiated.contains(dstId)) {
+                    log("starting key exchange with " + dstId);
+                    keyExchangeInitiated.add(dstId);
+                    sendKeyExchange(dst);
+                }
+            }
+
+            // Wait for key exchange to complete (max 2 seconds)
+            if (!crypto.waitForKeyExchange(dstId, 2000)) {
+                log("key exchange timeout with " + dstId);
+                return;
+            }
+        }
+
         byte baseType = MessageType.CHAT;
         byte finalType = privateDirect
-                ? MessageType.withNoForward(baseType)  // geen hops
-                : baseType;                            // normale mesh
+                ? MessageType.withNoForward(baseType)
+                : baseType;
 
         sendTo(dst, text, finalType, (byte) 5);
+    }
+
+    private void sendKeyExchange(byte dst) throws Exception {
+        byte[] publicKey = crypto.getPublicKey();
+
+        if (publicKey.length > 255) {
+            throw new IllegalArgumentException("Public key too large");
+        }
+
+        Packet p = new Packet(id, dst, MessageType.KEY_EXCHANGE, (byte) 5, nextSeq(), publicKey);
+        radio.send(p);
+        log("public key sent to " + (dst & 0xFF));
     }
 
     public void stop() { running = false; }
@@ -46,16 +78,16 @@ public class MeshNode implements Runnable {
 
     public void sendTo(byte dst, String text, byte type, byte ttl) throws Exception {
         byte[] plainPayload = text.getBytes();
+        int dstId = dst & 0xFF;
+        byte[] encrypted = crypto.encrypt(plainPayload, dstId);
 
-        // Encrypt payload
-        byte[] encrypted = crypto.encrypt(plainPayload);
         if (encrypted.length > 255) {
             throw new IllegalArgumentException("Encrypted payload too large for Packet");
         }
 
         Packet p = new Packet(id, dst, type, ttl, nextSeq(), encrypted);
         radio.send(p);
-        log("sent (encrypted): " + p);
+        log("sent to " + dstId + " [" + crypto.getStats(dstId) + "]");
     }
 
     private synchronized int nextSeq() { return seq++; }
@@ -72,12 +104,12 @@ public class MeshNode implements Runnable {
     private void sendAck(byte dst, int seqToAck) throws Exception {
         String ackMsg = "ACK " + seqToAck;
         byte[] plain = ackMsg.getBytes();
-        byte[] encrypted = crypto.encrypt(plain);
+        int dstId = dst & 0xFF;
+        byte[] encrypted = crypto.encrypt(plain, dstId);
         if (encrypted.length > 255) return;
 
         Packet ack = new Packet(id, dst, MessageType.ACK, (byte) 3, seqToAck, encrypted);
         radio.send(ack);
-        log("sent ACK to " + (dst & 0xFF) + " for seq=" + seqToAck);
     }
 
     private void handleCommand(String msg) {
@@ -89,37 +121,53 @@ public class MeshNode implements Runnable {
     }
 
     private void handle(Packet p) throws Exception {
-
         if (isDuplicate(p)) {
             return;
         }
 
         if (p.dstId == id) {
+            int srcId = p.srcId & 0xFF;
+            byte baseType = MessageType.baseType(p.type);
+
+            if (baseType == MessageType.KEY_EXCHANGE) {
+                log(" received public key from " + srcId);
+                crypto.processPublicKey(srcId, p.payload);
+
+                synchronized (keyExchangeInitiated) {
+                    if (!keyExchangeInitiated.contains(srcId)) {
+                        keyExchangeInitiated.add(srcId);
+                        sendKeyExchange(p.srcId);
+                    }
+                }
+
+                log("key exchange completed with " + srcId);
+                return;
+            }
+
             byte[] decrypted;
             try {
-                decrypted = crypto.decrypt(p.payload);
+                decrypted = crypto.decrypt(p.payload, srcId);
             } catch (Exception e) {
-                log("failed to decrypt packet -> drop");
+                log("decrypt failed from " + srcId);
                 return;
             }
             String msg = new String(decrypted);
 
-            byte baseType = MessageType.baseType(p.type);
             switch (baseType) {
                 case MessageType.CHAT:
-                    log("CHAT: " + msg);
-                    // stuur ACK terug
+                    log("CHAT from " + srcId + " [" + crypto.getStats(srcId) + "]: " + msg);
                     sendAck(p.srcId, p.seq);
                     break;
                 case MessageType.CMD:
+                    log(" CMD from " + srcId + ": " + msg);
                     handleCommand(msg);
                     sendAck(p.srcId, p.seq);
                     break;
                 case MessageType.ACK:
-                    log("ACK received for seq=" + p.seq + " from " + (p.srcId & 0xFF));
+                    log("ACK from " + srcId + " for seq=" + p.seq);
                     break;
                 default:
-                    log("UNKNOWN type=" + baseType + " msg=" + msg);
+                    log("unknown type=" + baseType);
                     break;
             }
 
@@ -127,13 +175,7 @@ public class MeshNode implements Runnable {
             Packet fwd = new Packet(p.srcId, p.dstId, p.type,
                     (byte) (p.ttl - 1), p.seq, p.payload);
             radio.send(fwd);
-            log("forwarded: " + fwd);
-
-        } else if (MessageType.isNoForward(p.type)) {
-            log("not forwarded (NO_FORWARD flag): " + p);
-
-        } else {
-            log("dropped (TTL=0): " + p);
+            log("forwarded src=" + (p.srcId & 0xFF) + " dst=" + (p.dstId & 0xFF));
         }
     }
 
